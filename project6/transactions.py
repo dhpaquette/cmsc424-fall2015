@@ -20,7 +20,7 @@ class LockTable:
 	IX = 3
 
 	# Compatibility matrix
-	compatibility_list = [(IS, IS), (IS, S), (S, IS), (S, S)]
+	compatibility_list = [(IS, IS), (IS, S), (S, IS), (S, S),(IS,IX),(IX,IS),(IX,IX)]
 	@staticmethod
 	def areCompatible(ltype1, ltype2):
 		return (ltype1, ltype2) in LockTable.compatibility_list
@@ -90,6 +90,21 @@ class LockTable:
 				cond.notifyAll()
 
 	@staticmethod
+	def dfs(waitsforgraph,x,cycle,visited,done):
+		if cycle[0]:
+			return
+		visited.append(x)
+
+		for y in waitsforgraph[x]:
+			if y in visited and y not in done:
+				cycle[0] = True
+				return
+			else:
+				LockTable.dfs(waitsforgraph,y,cycle,visited,done)
+		done.append(x)
+
+
+	@staticmethod
 	def detectDeadlocksAndChooseTransactionsToAbort():
 		############################################
 		####
@@ -103,7 +118,41 @@ class LockTable:
 		############################################
 
 		# Return the list of transactions to be aborted (empty if none)
-		return []
+		"""print "Waiting_Transactions_And_Locks"		
+		for x in LockTable.lockhashtable:
+			print '{0}: {1}'.format(x,LockTable.lockhashtable[x].waiting_transactions_and_locks)		
+		print "Current_Transactions_And_Locks"	
+		for x in LockTable.lockhashtable:
+			print '{0}: {1}'.format(x,LockTable.lockhashtable[x].current_transactions_and_locks)"""
+		
+		visited = list()
+		done = list()
+		result = list()
+		cycle = [False]
+
+		waitsforgraph = dict()	
+		with LockTable.hashtable_lock:
+			for x in LockTable.lockhashtable:
+				if not len(LockTable.lockhashtable[x].waiting_transactions_and_locks) == 0:
+					for i in LockTable.lockhashtable[x].waiting_transactions_and_locks:
+						if waitsforgraph.get(i[0],None) == None:
+							waitsforgraph[i[0]] = [LockTable.lockhashtable[x].current_transactions_and_locks[0][0]]
+						else:
+							tmp = waitsforgraph[i[0]]
+							tmp.append(waitsforgraph[i[0]])
+							waitsforgraph[i[0]] = tmp
+
+		
+
+		for x in waitsforgraph:
+			if x not in visited and x not in done:
+				LockTable.dfs(waitsforgraph,x,cycle,visited,done)
+			if cycle[0]:
+				result.append(x)
+				cycle[0] = False			
+		
+
+		return result
 
 	@staticmethod
 	def detectDeadlocks():
@@ -170,10 +219,49 @@ class LogManager:
 	def restartRecovery():
 		print "Starting Restart Recovery......."
 		#raise ValueError("Functionality to be implemented")
+		undoList = list()
+		with LogManager.logfile_lock:
+			f = open(LogManager.fileName,'r')
+			allrecords = [LogManager.readLogRecord(line) for line in f.readlines()]
+			f.close()
+			#REDO PHASE
+			for x in allrecords:				 
+				if x.info[1] == LogRecord.START:
+					undoList.append(x.info[0])					
+				if x.info[1] == LogRecord.COMMIT or x.info[1] == LogRecord.ABORT:
+					undoList.remove(x.info[0])
+				if x.info[1] == LogRecord.UPDATE:
+					tup = Relation.getRelationByName(x.info[2]).getTuple(x.info[3])
+					tup.setAttribute(x.info[4],x.info[6])
+				if x.info[1] == LogRecord.CLR:
+					tup = Relation.getRelationByName(x.info[2]).getTuple(x.info[3])
+					tup.setAttribute(x.info[4],x.info[5])
+
+			toPrint = list()
+			#UNDO PHASE
+			for x in reversed(allrecords):				
+				if x.info[1] == LogRecord.UPDATE and x.info[0] in undoList:
+					tup = Relation.getRelationByName(x.info[2]).getTuple(x.info[3])
+					tup.setAttribute(x.info[4],x.info[5])
+					lr = LogRecord([x.info[0],LogRecord.CLR,x.info[2],x.info[3],x.info[4],x.info[5]])
+					toPrint.append(lr)
+					
+				
+				if x.info[1] == LogRecord.START and x.info[0] in undoList:
+					lr = LogRecord([x.info[0],LogRecord.ABORT])
+					toPrint.append(lr)					
+					undoList.remove(x.info[0])
+				if len(undoList) == 0:
+					break
+
+			
+		for i in toPrint:			
+			LogManager.writeLogRecord(i)
 
 		# After the restart recovery is done (i.e., all the required changes redone, all the incomplete transactions
 		# undone, and all the pages have been written to disk), we can now write out a CHECKPOINT record to signify
 		# that the file contents are in a consistent state
+
 		lr = LogRecord([-1, LogRecord.CHECKPOINT, list()])
 		LogManager.writeLogRecord(lr)
 
@@ -182,7 +270,7 @@ class LogManager:
 		with LogManager.logfile_lock:
 			w = json.dumps(lr.info) + "\n"
 			f = open(LogManager.fileName, 'a')
-			f.write(w)
+			f.write(w)			
 	@staticmethod
 	def readLogRecord(js):
 		return LogRecord(json.loads(js))
@@ -285,7 +373,12 @@ class TransactionState:
 		return [relation.fileName, LockTable.S] in self.locks or self.getLock(relation.fileName, LockTable.S)
 
 	def getXLockTuple(self, relation, primary_id):
-		return [relation.fileName, LockTable.X] in self.locks or self.getLock(relation.fileName, LockTable.X)
+		#print self.locks
+		if [relation.fileName, LockTable.IX] not in self.locks and [relation.fileName, LockTable.X] not in self.locks:
+			return self.getLock(relation.fileName, LockTable.IX) and self.getLock(primary_id, LockTable.X)
+		else:
+			return self.getLock(primary_id, LockTable.X)
+		#return [relation.fileName, LockTable.X] in self.locks or self.getLock(relation.fileName, LockTable.X)
 
 	def getSLockTuple(self, relation, primary_id):
 		if [relation.fileName, LockTable.IS] not in self.locks and [relation.fileName, LockTable.S] not in self.locks:
