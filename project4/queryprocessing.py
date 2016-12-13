@@ -1,3 +1,5 @@
+import inspect
+from operator import attrgetter
 from disk_relations import *
 
 # We will implement our operators using the iterator interface
@@ -116,6 +118,7 @@ class HashJoin(Operator):
 					hashtable[r.getAttribute(self.right_attribute)].append(r)
 				else: 
 					hashtable[r.getAttribute(self.right_attribute)] = [r]
+					
 			# Then, for each tuple in the left input, we look for matches and output those
 			# Using "yield" significantly simplifies this code
 			for l in self.left_child.get_next():
@@ -127,9 +130,75 @@ class HashJoin(Operator):
 						yield Tuple(None, output)
 
 		elif self.jointype == self.LEFT_OUTER_JOIN:
-			raise ValueError("Functionality to be implemented")
+
+			if not self.right_child.relation.blocks:
+				for l in self.left_child.get_next():
+					output = list(l.t)					
+					for i in range(0, len(self.right_child.relation.schema)):
+						output.append("NULL")
+					yield Tuple(None, output)
+
+			
+			hashtable = dict()
+			for r in self.right_child.get_next():
+				key = r.getAttribute(self.right_attribute)
+				if key in hashtable:
+					hashtable[r.getAttribute(self.right_attribute)].append(r)
+				else:
+					hashtable[r.getAttribute(self.right_attribute)] = [r]
+			
+			for l in self.left_child.get_next():
+				key = l.getAttribute(self.left_attribute)					
+				if key in hashtable:					
+					for r in hashtable[key]:
+						output = list(l.t)						
+						output.extend(list(r.t))
+						yield Tuple(None,output)
+				else:
+					output = list(l.t)					
+					for i in range(0, len(self.right_child.relation.schema)):
+						output.append("NULL")
+					yield Tuple(None, output)
+
+
+				
+
 		elif self.jointype == self.RIGHT_OUTER_JOIN:
-			raise ValueError("Functionality to be implemented")
+
+			if not self.left_child.relation.blocks:
+				for r in self.right_child.get_next():
+					output = []			
+					for i in range(0,len(self.left_child.relation.schema)):
+						output.append("NULL")
+					output.extend(r.t)					
+					yield Tuple(None, output)
+
+
+			hashtable = dict()
+			output = []
+			for l in self.left_child.get_next():
+				key = l.getAttribute(self.left_attribute)
+				if key in hashtable:
+					hashtable[l.getAttribute(self.left_attribute)].append(l)
+				else:
+					hashtable[l.getAttribute(self.left_attribute)] = [l]
+			
+			for r in self.right_child.get_next():
+				key = r.getAttribute(self.right_attribute)
+				
+				if key in hashtable:
+					for l in hashtable[key]:
+						output = list(l.t)
+						output.extend(list(r.t))
+						yield Tuple(None, output)
+				else:
+					output = []			
+					for i in range(0,len(self.left_child.relation.schema)):
+						output.append("NULL")
+					output.extend(r.t)					
+					yield Tuple(None, output)
+
+
 		else:
 			raise ValueError("This should not happen")
 
@@ -191,7 +260,18 @@ class GroupByAggregate(Operator):
 		else:
 			# for each different value "v" of the group by attribute, we should return a 2-tuple "(v, aggr_value)",
 			# where aggr_value is the value of the aggregate for the group of tuples corresponding to "v"
-			raise ValueError("Functionality to be implemented")
+			#while.child.get_next()
+			visited = []
+			for r in self.child.get_next():
+				aggr_value = GroupByAggregate.initial_value(self.aggregate_function)
+				v = r.getAttribute(self.group_by_attribute)							
+				for s in self.child.get_next():					
+					if r.getAttribute(self.group_by_attribute) == s.getAttribute(self.group_by_attribute):
+						aggr_value = GroupByAggregate.update_aggregate(self.aggregate_function,aggr_value,s.getAttribute(self.aggregate_attribute))						
+				if r.getAttribute(self.group_by_attribute) not in visited:
+					yield (v,aggr_value)
+					visited.append(r.getAttribute(self.group_by_attribute))			
+						
 
 # You are supposed to implement this join operator
 class SortMergeJoin(Operator):
@@ -211,7 +291,56 @@ class SortMergeJoin(Operator):
 	# You can load the two relations into arrays and use Python sort routines to sort them, and then merge
 	# Make sure to use "yield" to simplify your code
 	def get_next(self):
-		raise ValueError("Functionality to be implemented")
+
+		sorted_left_list = []
+		sorted_right_list = []
+		for l in self.left_child.get_next():
+			sorted_left_list.append(l)
+		sorted_left_list = sorted(sorted_left_list,key=lambda t: t.getAttribute(self.left_attribute))
+		for r in self.right_child.get_next():
+			sorted_right_list.append(r)
+		sorted_right_list = sorted(sorted_right_list,key=lambda t: t.getAttribute(self.right_attribute))
+		
+		
+		i = 0
+		j = 0
+		
+		while i < len(sorted_left_list) and j < len(sorted_right_list):
+			
+
+			if sorted_left_list[i].getAttribute(self.left_attribute) > sorted_right_list[j].getAttribute(self.right_attribute):
+				j = j + 1
+			elif sorted_left_list[i].getAttribute(self.left_attribute) < sorted_right_list[j].getAttribute(self.right_attribute):
+				i = i + 1
+			else: # They are equal
+				output = list(sorted_left_list[i].t)
+				output.extend(list(sorted_right_list[j].t))
+				yield Tuple(None,output)
+				
+
+				k = j+1
+				while ((k < len(sorted_right_list)) and (sorted_left_list[i].getAttribute(self.left_attribute) == sorted_right_list[k].getAttribute(self.right_attribute))):
+					output = list(sorted_left_list[i].t)
+					output.extend(list(sorted_right_list[k].t))
+					yield Tuple(None,output)
+					k = k+1
+					
+
+				p = i+1
+				while ((p < len(sorted_left_list)) and (sorted_left_list[p].getAttribute(self.left_attribute) == sorted_right_list[j].getAttribute(self.right_attribute))):
+					output = list(sorted_left_list[p].t)
+					output.extend(list(sorted_right_list[j].t))
+					
+					yield Tuple(None,output)
+					p = p+1
+					
+				i = i+1
+				j = j+1
+
+		
+
+
+		
 
 	# Typically you would close any open files, deallocate hash tables etc.
 	def close(self):

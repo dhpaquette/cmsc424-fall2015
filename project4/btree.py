@@ -193,8 +193,50 @@ class BTreeBlock(Block):
 			self.keysAndPointers.extend(otherBlock.keysAndPointers)
 
 	def redistributeWithBlock(self, otherBlock):
-		print "Redistributing entries between " + str(self) + " and " + str(otherBlock)
-		raise ValueError("Functionality to be implemented")
+		print "Redistributing entries between " + str(self) + " and " + str(otherBlock)		
+		if self.isLeaf:
+			if otherBlock.isUnderfull():
+				otherBlock.keysAndPointers.insert(0,self.keysAndPointers[-3]) #POINTER
+				otherBlock.keysAndPointers.insert(1,self.keysAndPointers[-2]) #KEY
+				del self.keysAndPointers[-2]
+				del self.keysAndPointers[-2]				
+				return otherBlock.keysAndPointers[1]
+			else:
+				self.keysAndPointers.insert(-1,otherBlock.keysAndPointers[0])
+				self.keysAndPointers.insert(-1,otherBlock.keysAndPointers[1])
+				del otherBlock.keysAndPointers[0]
+				del otherBlock.keysAndPointers[0]
+				
+				return otherBlock.keysAndPointers[1]
+		else:
+			if otherBlock.isUnderfull():
+				
+				parentBlock = self.parent.getBlock()
+				(block1, key, block2) = self.findSiblingWithSameParent(parentBlock)				
+				otherBlock.keysAndPointers.insert(0,self.keysAndPointers[-1])
+				otherBlock.keysAndPointers.insert(1,key)
+				res = self.keysAndPointers[-2]											
+				del self.keysAndPointers[-1]
+				del self.keysAndPointers[-1]
+				otherBlock.keysAndPointers[0].getBlock().parent = Pointer(otherBlock.blockNumber)								
+				
+				return res
+			else:		
+				
+				parentBlock = self.parent.getBlock()
+				(block1, key, block2) = self.findSiblingWithSameParent(parentBlock)
+				self.keysAndPointers.insert(len(self.keysAndPointers),otherBlock.keysAndPointers[0])
+				self.keysAndPointers.insert(-1,key)
+				res = otherBlock.keysAndPointers[1]
+				del otherBlock.keysAndPointers[0]
+				del otherBlock.keysAndPointers[0]				
+				self.keysAndPointers[-1].getBlock().parent = Pointer(self.blockNumber)				
+				
+				
+				return res
+			
+				
+				
 
 	def isUnderfull(self):
 		# Root can't be underful
